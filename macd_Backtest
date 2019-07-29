@@ -1,0 +1,201 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+#
+#
+# pd.read_html() :::::: html의 <table></table>을 찾아 pd.DataFrame으로 (return)
+## -------------------------------------------------------------------------------
+
+code_df = pd.read_html('https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13', header=0)[0]
+
+
+# 코드위한 6자리 재설정
+code_df.종목코드 = code_df.종목코드.map('{:06d}'.format)
+
+
+
+# 두개 컬럼만 가져와서 DataFrame 재설정
+code_df = code_df[['회사명', '종목코드']]
+
+
+# Column이름 영어로 바꾸기
+code_df = code_df.rename(columns={'회사명' : 'name', '종목코드' : 'code'})
+
+
+
+## -------------------------------------------------------------------------------
+
+## -------------------------------------------------------------------------------
+
+
+
+# 한글로 아이템이름 넣으면, KRX에서 얻은 code_df 에서 종목코드 code 연결하여
+# url에 해당종목코드 넣은 NaverFinance 주소 리턴. 
+# 출력
+##  ▼▼▼▼
+def get_url(item_name, code_df):
+    code = code_df.query("name=='{}'".format(item_name))['code'].to_string(index=False)
+    url = 'http://finance.naver.com/item/sise_day.nhn?code={code}'.format(code=code)
+    print(" 요청 url = {}".format(url))
+    return url
+
+# -----------------------------------------------------------------------
+
+item_name = '신라젠'
+
+url = get_url(item_name, code_df)
+
+## >>> 요청 url = http://finance.naver.com/item/sise_day.nhn?code=215600
+# -----------------------------------------------------------------------
+
+df = pd.DataFrame()
+
+
+## 20 페이지까지 테이블읽어서 DataFrame에 추가
+for page in range(1,21):
+    pg_url = '{url}&page={page}'.format(url=url, page=page)
+    df = df.append(pd.read_html(pg_url, header=0)[0], ignore_index = True)
+
+# -----------------------------------------------------------------------
+
+# 결측값row 제거
+df = df.dropna()
+
+df
+
+# -----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# DataFrame 컬럼이름 영어로 바꾸깅
+df =df.rename(columns={'날짜':'date','종가':'close','전일비':'diff','시가':'open','고가':'high','저가':'low','거래량':'volume'})
+
+# 데이터타입 을 int형 으로 
+# "\"역슬래쉬 하고 한줄내려 쓰면 , 이어진 줄
+df[['close','diff','open','low','volume']] \
+= df[['close','diff','open','low','volume']].astype(int)
+
+
+# 'date'시트 "YYYY.MM.DD" 형태(str)로 되어있는 것 을 "yyyy-mm-dd"형태(datetime)로 변경
+df['date'] = pd.to_datetime(df['date'])
+
+# date 를 기준으로 오름차순 정렬
+df.sort_values(by=['date'], ascending=True)
+
+
+
+## -------------------------------------------------------------------------------
+## -------------------------------MACD 함수화------------------------------------------
+## -------------------------------------------------------------------------------
+## --- df 를 파이낸스데이타 리더로 가져온 영한
+
+import FinanceDataReader as fdr
+df = fdr.DataReader('NFLX','2019')
+
+
+
+def get_macd(df, short=12, long=26, t=9):
+    # 입력받은 Input값이 pd.DataFrame임을 정의
+    df = pd.DataFrame(df)
+    # MACD 관련수식 _ 만들기
+    # 단기 12일(단기), 26일(장기) _EMA "지수이동평균"
+    ma_12 = df.close.ewm(span=12).mean()
+    ma_26 = df.close.ewm(span=26).mean()
+    macd = ma_12 - ma_26
+    #
+    # macd이론의 시그널==macds ?
+    macds = macd.ewm(span=9).mean()
+    # macd 이론의 오실레이터
+    macdo = macd - macds
+    ## Oscillator
+    #
+    df = df.assign(macd=macd, macds=macds, macdo=macdo).dropna()
+    #
+    #
+    return df
+
+def get_macd(df, short=12, long=26, t=9):
+    # 입력받은 Input값이 pd.DataFrame임을 정의
+    df = pd.DataFrame(df)
+    # MACD 관련수식 _ 만들기
+    # 단기 12일(단기), 26일(장기) _EMA "지수이동평균"
+    ma_12 = df.Close.ewm(span=12).mean()
+    ma_26 = df.Close.ewm(span=26).mean()
+    macd = ma_12 - ma_26
+    #
+    # macd이론의 시그널==macds ?
+    macds = macd.ewm(span=9).mean()
+    # macd 이론의 오실레이터
+    macdo = macd - macds
+    ## Oscillator
+    #
+    df = df.assign(macd=macd, macds=macds, macdo=macdo).dropna()
+    #
+    #
+    return df
+
+
+df_macdplus = get_macd(df)
+
+
+## -------------------------------------------------------------------------------
+## --------------------Plotly 라이브러리 로 [동적]그래프그리기--------------------
+## -------------------------------------------------------------------------------
+
+
+df = df_macdplus
+from plotly import tools
+import plotly.offline as offline
+import plotly.graph_objs as go
+
+macd = go.Scatter(
+x = df.index, 
+y = df['macd'],
+name = "MACD")
+
+signal = go.Scatter(
+x = df.index, 
+y = df['macds'],
+name = "Signal")
+
+
+oscillator = go.Bar(
+x = df.index, 
+y = df['macdo'],
+name = "Oscillator")
+
+
+
+
+trade_volume = go.Bar(
+x = df.index, 
+y = df['Volume'],
+name = "volume")
+
+
+Prices = go.Scatter(
+x = df.index, 
+y = df['Close'],
+name = "Close")
+
+
+item_name = "Netflix"
+layout = go.Layout(title='{} MACD 그래프'.format(item_name))
+fig = tools.make_subplots(rows=3, cols=1, shared_xaxes = True)
+data = [macd, signal, oscillator]
+offline.init_notebook_mode(connected=True)
+
+
+for trace in data:
+    fig.append_trace(trace, 2, 1) 
+fig.append_trace(trade_volume, 3, 1)    
+fig.append_trace(Prices, 1, 1)
+offline.plot(fig)
+
+
+
+
+
+
+
+
